@@ -6,7 +6,8 @@
 class processManager
 {
 public:
-	processManager(TCHAR *CmdLine);
+	processManager();
+	processManager(std::string & CmdLine);
 	~processManager();
 	void startProcess();
 	void restartProcess();
@@ -19,10 +20,12 @@ public:
 	void SetOnProcStartCallback( std::function<void()> f);
 	void SetOnProcRestartCallback(std::function<void()> f);
 	void SetOnProcManuallyStoppedCallback(std::function<void()>  f);
+	void CatchProcess(DWORD dwProcessID);
+	void SetCmdLine(std::string & CLine);
 
 private:
 	LPCTSTR lpApplicationName;
-	TCHAR *CmdLine;
+	std::string CmdLine;
 	bool continueFlag = false;
 	STARTUPINFO StartUpInfo;
 	PROCESS_INFORMATION ProcInfo;
