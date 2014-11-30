@@ -2,16 +2,22 @@
 #include "processManager.h"
 #include "logger.h"
 
-#include <Aclapi.h>
 #include <Winternl.h>
 
+void processManager::Init()
+{
+	InitializeCriticalSection(&onProcStart_cs);
+	InitializeCriticalSection(&onProcManuallyStopped_cs);
+}
 processManager::processManager()
 {
+	Init();
 	logger::getInstance()->message(logger::LogInfo, "Created processManager without cmdline.");
 
 }
 processManager::processManager(std::string & CmdL)
 {
+	Init();
 	if (!CmdL.empty() && Handle == NULL)
 	{
 		CmdLine = CmdL;
@@ -24,6 +30,8 @@ processManager::processManager(std::string & CmdL)
 
 processManager::~processManager()
 {
+	DeleteCriticalSection(&onProcStart_cs);
+	DeleteCriticalSection(&onProcManuallyStopped_cs);
 	continueFlag = false;
 	stopProcess();
 }
@@ -35,7 +43,6 @@ DWORD WINAPI threadFunction(LPVOID lpParam)
 
 	pm->runProcess();
 
-	logger::getInstance()->message(logger::LogInfo, "Exit the thread.");
 	ExitThread(0);
 }
 
@@ -44,6 +51,7 @@ DWORD WINAPI monitorFunction(LPVOID lpParam)
 	auto pm = static_cast<processManager*> (lpParam);
 	while (pm->isNeedToContinue())
 	{
+
 		DWORD dwExitCode = 0;
 		GetExitCodeProcess(pm->GetHandle(), &dwExitCode);
 		if (dwExitCode != STILL_ACTIVE)
@@ -59,13 +67,18 @@ DWORD WINAPI monitorFunction(LPVOID lpParam)
 	pm->stopProcess();
 
 	ExitThread(0);
-	logger::getInstance()->message(logger::LogInfo, "Exit the thread.");
+	logger::getInstance()->message(logger::LogInfo, "Exit the monitor thread.");
 }
 
 void processManager::startProcess()
 {
-	if (OnProcStart)
+	if (OnProcStart) 
+	{
+		EnterCriticalSection(&onProcStart_cs);
 		OnProcStart();
+		LeaveCriticalSection(&onProcStart_cs);
+	}
+
 	if (!threadHandle)
 		threadHandle = CreateThread(nullptr, 0, &threadFunction, this, 0, nullptr);
 }
@@ -97,14 +110,12 @@ void processManager::runProcess()
 
 void processManager::restartProcess()
 {
+	logger::getInstance()->message(logger::LogInfo, "Restarting process.");
+	continueFlag = false;
 	statusFlag = IsRestarting;
-	if (OnProcRestart)
-		OnProcRestart();
 	if (Handle != 0)
 	{
-		TerminateProcess(ProcInfo.hProcess, NO_ERROR);
-		logger::getInstance()->message(logger::LogInfo, "Process terminated.");
-		Handle = NULL;
+		stopProcess();
 	}
 	startProcess();
 }
@@ -112,17 +123,31 @@ void processManager::restartProcess()
 
 void processManager::stopProcess()
 {
-	if (OnProcManuallyStopped)
-		OnProcManuallyStopped();
 	if (Handle != 0)
 	{
 		continueFlag = false;
-		TerminateThread(monitorHandle, NO_ERROR);
-		TerminateProcess(Handle, NO_ERROR);	// убрать процесс
-		TerminateThread(threadHandle, NO_ERROR);
-		statusFlag = IsStopped;
-		logger::getInstance()->message(logger::LogInfo, "Process terminated.");
-		Handle = 0;
+		if (TerminateThread(monitorHandle, NO_ERROR))
+		{
+			logger::getInstance()->message(logger::LogInfo, "Monitor thread terminated.");
+			monitorHandle = 0;
+		}
+		if (TerminateProcess(Handle, NO_ERROR))	// убрать процесс
+		{
+			if (OnProcManuallyStopped)
+			{
+				EnterCriticalSection(&onProcManuallyStopped_cs);
+				OnProcManuallyStopped();
+				LeaveCriticalSection(&onProcManuallyStopped_cs);
+			}
+			logger::getInstance()->message(logger::LogInfo, "Process terminated.");
+			Handle = 0;
+		}
+		if (TerminateThread(threadHandle, NO_ERROR))
+		{
+			logger::getInstance()->message(logger::LogInfo, "Thread terminated.");
+			threadHandle = 0;
+		}
+			statusFlag = IsStopped;
 	}
 }
 
@@ -139,16 +164,13 @@ bool processManager::isNeedToContinue()
 void processManager::SetOnProcStartCallback(std::function<void()> f)
 {
 	OnProcStart = f;
-}
-
-void processManager::SetOnProcRestartCallback(std::function<void()> f)
-{
-	OnProcRestart = f;
+	logger::getInstance()->message(logger::LogInfo, "Added OnProcStartCallback.");
 }
 
 void processManager::SetOnProcManuallyStoppedCallback(std::function<void()> f)
 {
 	OnProcManuallyStopped = f;
+	logger::getInstance()->message(logger::LogInfo, "Added OnProcManuallyStoppedCallback.");
 }
 
 DWORD processManager::GetProcID()
@@ -188,7 +210,6 @@ DWORD WINAPI GetCmdLineThread(LPVOID lpParam)
 
 void processManager::CatchProcess(DWORD dwProcessID)
 {
-
 	if (dwProcessID)
 	{
 		procID = dwProcessID;

@@ -29,38 +29,28 @@ void logger::message(int logTp, const char* message)
 		if (!fileHandle)
 			fileHandle = CreateFile("Log.txt", GENERIC_WRITE, 0, 0,
 			OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-		switch (logTp)
-		{
-		case LogError:
-			if (logLevel >= LogError)
+		if (logTp <= logLevel) {
+			switch (logTp)
 			{
+			case LogError:
 				sprintf_s(messageBuffer, "ERROR:%s\n", message);
-				printf(messageBuffer);
-				WriteFile(fileHandle, messageBuffer, (DWORD)strlen(messageBuffer),
-					&dwBytesWritten, NULL);
-			}
-			break;
-		case LogWarning:
-			if (logLevel >= LogWarning)
-			{
+				break;
+			case LogWarning:
 				sprintf_s(messageBuffer, "WARNING:%s\n", message);
-				printf(messageBuffer);
-				WriteFile(fileHandle, messageBuffer, (DWORD)strlen(messageBuffer),
-					&dwBytesWritten, NULL);
-			}
-			break;
-		case LogInfo:
-			if (logLevel == LogInfo)
-			{
+				break;
+			case LogInfo:
 				sprintf_s(messageBuffer, "INFO:%s\n", message);
-				printf(messageBuffer);
-				WriteFile(fileHandle, messageBuffer, (DWORD)strlen(messageBuffer),
-					&dwBytesWritten, NULL);
+				break;
+			default:
+				sprintf_s(messageBuffer, "UNNOWN:%s\n", message);
+				break;
 			}
-			break;
-		default:
-			break;
 		}
+
+		printf(messageBuffer);
+		WriteFile(fileHandle, messageBuffer, (DWORD)strlen(messageBuffer),
+			&dwBytesWritten, NULL);
+
 	}
 	LeaveCriticalSection(&mes_cs);
 }

@@ -18,12 +18,12 @@ public:
 	DWORD GetProcID();
 	void GetProcessInfo();
 	void SetOnProcStartCallback( std::function<void()> f);
-	void SetOnProcRestartCallback(std::function<void()> f);
 	void SetOnProcManuallyStoppedCallback(std::function<void()>  f);
 	void CatchProcess(DWORD dwProcessID);
 	void SetCmdLine(std::string & CLine);
 
 private:
+	void Init();
 	LPCTSTR lpApplicationName;
 	std::string CmdLine;
 	bool continueFlag = false;
@@ -41,8 +41,11 @@ private:
 	};
 
 	int statusFlag = IsStopped;
+
 	std::function<void()> OnProcStart = nullptr;
 	std::function<void()> OnProcRestart = nullptr;
 	std::function<void()> OnProcManuallyStopped = nullptr;
+	CRITICAL_SECTION onProcStart_cs;
+	CRITICAL_SECTION onProcManuallyStopped_cs;
 };
 
