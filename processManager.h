@@ -1,6 +1,7 @@
 #include <Windows.h>
 #include <iostream>
 #include <functional>
+#include <mutex>
 
 #pragma once
 class processManager
@@ -12,9 +13,8 @@ public:
 	void startProcess();
 	void restartProcess();
 	void stopProcess();
-	void runProcess();
-	bool isNeedToContinue();
-	HANDLE GetHandle();
+	void monitorFunc();
+	void threadFunc();
 	DWORD GetProcID();
 	void GetProcessInfo();
 	void SetOnProcStartCallback( std::function<void()> f);
@@ -23,12 +23,12 @@ public:
 	void SetCmdLine(std::string & CLine);
 
 private:
+	void runProcess();
 	void Init();
 	LPCTSTR lpApplicationName;
 	std::string CmdLine;
 	bool continueFlag = false;
-	STARTUPINFO StartUpInfo;
-	PROCESS_INFORMATION ProcInfo;
+
 	HANDLE Handle = 0;
 	HANDLE threadHandle = 0;
 	HANDLE monitorHandle = 0;
@@ -47,5 +47,8 @@ private:
 	std::function<void()> OnProcManuallyStopped = nullptr;
 	CRITICAL_SECTION onProcStart_cs;
 	CRITICAL_SECTION onProcManuallyStopped_cs;
+	std::mutex threadHandleMutex;
+	std::mutex monitorHandleMutex;
+	std::mutex processHandleMutex;
 };
 

@@ -18,7 +18,7 @@ processManager::processManager()
 processManager::processManager(std::string & CmdL)
 {
 	Init();
-	if (!CmdL.empty() && Handle == NULL)
+	if (!CmdL.empty())
 	{
 		CmdLine = CmdL;
 		logger::getInstance()->message(logger::LogInfo, "Command line saved.");
@@ -41,71 +41,98 @@ DWORD WINAPI threadFunction(LPVOID lpParam)
 	logger::getInstance()->message(logger::LogInfo, "Thread created.");
 	auto pm = static_cast<processManager*> (lpParam);
 
-	pm->runProcess();
+	pm->threadFunc();
 
 	ExitThread(0);
 }
 
-DWORD WINAPI monitorFunction(LPVOID lpParam)
+void processManager::threadFunc()
 {
-	auto pm = static_cast<processManager*> (lpParam);
-	while (pm->isNeedToContinue())
-	{
+	STARTUPINFO StartUpInfo;
+	PROCESS_INFORMATION ProcInfo;
 
-		DWORD dwExitCode = 0;
-		GetExitCodeProcess(pm->GetHandle(), &dwExitCode);
-		if (dwExitCode != STILL_ACTIVE)
-		{
-
-			logger::getInstance()->message(logger::LogInfo, "Process is not active.");
-			logger::getInstance()->message(logger::LogInfo, "Trying to restart process...");
-			pm->runProcess();
-		}
-		Sleep(100);
-	}
-
-	pm->stopProcess();
-
-	ExitThread(0);
-	logger::getInstance()->message(logger::LogInfo, "Exit the monitor thread.");
-}
-
-void processManager::startProcess()
-{
-	if (OnProcStart) 
-	{
-		EnterCriticalSection(&onProcStart_cs);
-		OnProcStart();
-		LeaveCriticalSection(&onProcStart_cs);
-	}
-
-	if (!threadHandle)
-		threadHandle = CreateThread(nullptr, 0, &threadFunction, this, 0, nullptr);
-}
-
-void processManager::runProcess()
-{
 	ZeroMemory(&StartUpInfo, sizeof(STARTUPINFO));
 	LPSTR s = const_cast <char *> (CmdLine.c_str());
-	if (CreateProcess(lpApplicationName, s,
+	if (!CmdLine.empty() && CreateProcess(lpApplicationName, s,
 		NULL, NULL, FALSE, NULL, NULL, NULL, &StartUpInfo, &ProcInfo))
 	{
 		logger::getInstance()->message(logger::LogInfo, "Process successfully started.");
 		continueFlag = true;
 		statusFlag = IsRunning;
+		
+		processHandleMutex.lock();
 		Handle = ProcInfo.hProcess;
+		processHandleMutex.unlock();
+
 		procID = ProcInfo.dwProcessId;
-		if (!monitorHandle)
-		{
-			statusFlag = IsRestarting;
-			monitorHandle = CreateThread(nullptr, 0, &monitorFunction, this, 0, nullptr);
-		}
 	}
 	else
 	{
 		logger::getInstance()->message(logger::LogError, "Process can not be started!");
-		TerminateThread(threadHandle, NO_ERROR);
 	}
+}
+
+DWORD WINAPI monitorFunction(LPVOID lpParam)
+{
+	auto pm = static_cast<processManager*> (lpParam);
+	pm->monitorFunc();
+
+	logger::getInstance()->message(logger::LogInfo, "Exit the monitor thread.");
+	ExitThread(0);
+}
+
+void processManager::monitorFunc()
+{
+	continueFlag = true;
+
+	while (continueFlag)
+	{
+		DWORD dwExitCode = 0;
+
+		processHandleMutex.lock();
+		GetExitCodeProcess(Handle, &dwExitCode);
+		processHandleMutex.unlock();
+
+		if (dwExitCode != STILL_ACTIVE)
+		{
+			logger::getInstance()->message(logger::LogInfo, "Process is not active.");
+			logger::getInstance()->message(logger::LogInfo, "Trying to restart process...");
+			runProcess();
+		}
+		Sleep(100);
+	}
+}
+
+void processManager::startProcess()
+{
+	threadHandleMutex.lock();
+	if (threadHandle)
+		TerminateThread(threadHandle, NO_ERROR);
+	threadHandleMutex.unlock();
+
+	monitorHandleMutex.lock();
+	if (!monitorHandle)
+	{
+		statusFlag = IsRunning;
+		monitorHandle = CreateThread(nullptr, 0, &monitorFunction, this, 0, nullptr);
+	}
+	monitorHandleMutex.unlock();
+
+	if (OnProcStart)
+	{
+		EnterCriticalSection(&onProcStart_cs);
+		OnProcStart();
+		LeaveCriticalSection(&onProcStart_cs);
+	}
+}
+
+void processManager::runProcess()
+{
+	std::lock_guard<std::mutex> l(threadHandleMutex);
+	if (threadHandle)
+		TerminateThread(threadHandle, NO_ERROR);
+
+	threadHandle = CreateThread(nullptr, 0, &threadFunction, this, 0, nullptr);
 }
 
 void processManager::restartProcess()
@@ -113,26 +140,29 @@ void processManager::restartProcess()
 	logger::getInstance()->message(logger::LogInfo, "Restarting process.");
 	continueFlag = false;
 	statusFlag = IsRestarting;
-	if (Handle != 0)
-	{
-		stopProcess();
-	}
+	
+	stopProcess();
 	startProcess();
 }
 
 
 void processManager::stopProcess()
 {
-	if (Handle != 0)
-	{
 		continueFlag = false;
+
+		monitorHandleMutex.lock();
 		if (TerminateThread(monitorHandle, NO_ERROR))
 		{
 			logger::getInstance()->message(logger::LogInfo, "Monitor thread terminated.");
 			monitorHandle = 0;
 		}
-		if (TerminateProcess(Handle, NO_ERROR))	// убрать процесс
+		monitorHandleMutex.unlock();
+
+		processHandleMutex.lock();
+		if (Handle && TerminateProcess(Handle, NO_ERROR))	// убрать процесс
 		{
+			Handle = 0;			
+			
 			if (OnProcManuallyStopped)
 			{
 				EnterCriticalSection(&onProcManuallyStopped_cs);
@@ -140,25 +170,18 @@ void processManager::stopProcess()
 				LeaveCriticalSection(&onProcManuallyStopped_cs);
 			}
 			logger::getInstance()->message(logger::LogInfo, "Process terminated.");
-			Handle = 0;
 		}
+		processHandleMutex.unlock();
+
+		threadHandleMutex.lock();
 		if (TerminateThread(threadHandle, NO_ERROR))
 		{
 			logger::getInstance()->message(logger::LogInfo, "Thread terminated.");
 			threadHandle = 0;
 		}
-			statusFlag = IsStopped;
-	}
-}
+		threadHandleMutex.unlock();
+		statusFlag = IsStopped;
 
-HANDLE processManager::GetHandle()
-{
-	return Handle;
-}
-
-bool processManager::isNeedToContinue()
-{
-	return continueFlag;
 }
 
 void processManager::SetOnProcStartCallback(std::function<void()> f)
@@ -180,6 +203,7 @@ DWORD processManager::GetProcID()
 
 void processManager::GetProcessInfo()
 {
+	processHandleMutex.lock();
 	std::cout << "Process handle = " << Handle << std::endl;
 	std::cout << "Process ID = " << procID << std::endl;
 
@@ -198,6 +222,7 @@ void processManager::GetProcessInfo()
 		std::cout << "Status is UNKNOWN" << std::endl;
 		break;
 	}
+	processHandleMutex.unlock();
 }
 
 DWORD WINAPI GetCmdLineThread(LPVOID lpParam)
@@ -213,15 +238,18 @@ void processManager::CatchProcess(DWORD dwProcessID)
 	if (dwProcessID)
 	{
 		procID = dwProcessID;
+		
+		stopProcess();
+		
+		processHandleMutex.lock();
 		Handle = OpenProcess(PROCESS_ALL_ACCESS, TRUE, dwProcessID);
 		if (!Handle)
+		{
 			logger::getInstance()->message(logger::LogError, "Failed to catch the process.");
+		}
 		else
 		{
 			logger::getInstance()->message(logger::LogInfo, "Handle is captured.");
-
-			//			if ( !CreateRemoteThread(Handle, nullptr, 0, &GetCmdLineThread, this, 0, nullptr))
-			//			logger::getInstance()->message(logger::LogError, "Failed to create thread for recieving CmdLine");
 
 			PROCESS_BASIC_INFORMATION peb;
 			DWORD tmp;
@@ -265,14 +293,22 @@ void processManager::CatchProcess(DWORD dwProcessID)
 
 			continueFlag = true;
 			statusFlag = IsRunning;
+		}
+		processHandleMutex.unlock();
+
+		if (continueFlag)
+		{
+			monitorHandleMutex.lock();
 			if (!monitorHandle)
 			{
 				statusFlag = IsRestarting;
 				monitorHandle = CreateThread(nullptr, 0, &monitorFunction, this, 0, nullptr);
 			}
 			else
+			{
 				logger::getInstance()->message(logger::LogError, "Unabled to monitor this process!\n");
-
+			}
+			monitorHandleMutex.unlock();
 		}
 	}
 }

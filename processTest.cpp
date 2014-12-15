@@ -20,6 +20,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	getchar();
 	int loglevel = 3;
 	logger::getInstance()->SetLogLevel(loglevel);
+	logger::getInstance()->SetWriteToFile(true);
 	printf("From now, evry action with loglevel lower than %i \nwill be logged to logfile and displayed on the screen.\n\n", loglevel);
 	printf("-------------------------------------\n");
 	processManager pr1(std::string("Calc.exe"));
