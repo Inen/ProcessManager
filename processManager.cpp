@@ -42,7 +42,6 @@ DWORD WINAPI threadFunction(LPVOID lpParam)
 	auto pm = static_cast<processManager*> (lpParam);
 
 	pm->threadFunc();
-
 	ExitThread(0);
 }
 
@@ -59,7 +58,7 @@ void processManager::threadFunc()
 		logger::getInstance()->message(logger::LogInfo, "Process successfully started.");
 		continueFlag = true;
 		statusFlag = IsRunning;
-		
+
 		processHandleMutex.lock();
 		Handle = ProcInfo.hProcess;
 		processHandleMutex.unlock();
@@ -70,6 +69,7 @@ void processManager::threadFunc()
 	{
 		logger::getInstance()->message(logger::LogError, "Process can not be started!");
 	}
+	WaitForSingleObject(Handle, INFINITE);
 }
 
 DWORD WINAPI monitorFunction(LPVOID lpParam)
@@ -87,19 +87,11 @@ void processManager::monitorFunc()
 
 	while (continueFlag)
 	{
-		DWORD dwExitCode = 0;
+		logger::getInstance()->message(logger::LogInfo, "Process is not active.");
+		logger::getInstance()->message(logger::LogInfo, "Trying to restart process...");
+		runProcess();
 
-		processHandleMutex.lock();
-		GetExitCodeProcess(Handle, &dwExitCode);
-		processHandleMutex.unlock();
-
-		if (dwExitCode != STILL_ACTIVE)
-		{
-			logger::getInstance()->message(logger::LogInfo, "Process is not active.");
-			logger::getInstance()->message(logger::LogInfo, "Trying to restart process...");
-			runProcess();
-		}
-		Sleep(100);
+		WaitForSingleObject(threadHandle, INFINITE);
 	}
 }
 
@@ -140,7 +132,7 @@ void processManager::restartProcess()
 	logger::getInstance()->message(logger::LogInfo, "Restarting process.");
 	continueFlag = false;
 	statusFlag = IsRestarting;
-	
+
 	stopProcess();
 	startProcess();
 }
@@ -148,39 +140,39 @@ void processManager::restartProcess()
 
 void processManager::stopProcess()
 {
-		continueFlag = false;
+	continueFlag = false;
 
-		monitorHandleMutex.lock();
-		if (TerminateThread(monitorHandle, NO_ERROR))
-		{
-			logger::getInstance()->message(logger::LogInfo, "Monitor thread terminated.");
-			monitorHandle = 0;
-		}
-		monitorHandleMutex.unlock();
+	monitorHandleMutex.lock();
+	if (TerminateThread(monitorHandle, NO_ERROR))
+	{
+		logger::getInstance()->message(logger::LogInfo, "Monitor thread terminated.");
+		monitorHandle = 0;
+	}
+	monitorHandleMutex.unlock();
 
-		processHandleMutex.lock();
-		if (Handle && TerminateProcess(Handle, NO_ERROR))	// убрать процесс
-		{
-			Handle = 0;			
-			
-			if (OnProcManuallyStopped)
-			{
-				EnterCriticalSection(&onProcManuallyStopped_cs);
-				OnProcManuallyStopped();
-				LeaveCriticalSection(&onProcManuallyStopped_cs);
-			}
-			logger::getInstance()->message(logger::LogInfo, "Process terminated.");
-		}
-		processHandleMutex.unlock();
+	processHandleMutex.lock();
+	if (Handle && TerminateProcess(Handle, NO_ERROR))	// убрать процесс
+	{
+		Handle = 0;
 
-		threadHandleMutex.lock();
-		if (TerminateThread(threadHandle, NO_ERROR))
+		if (OnProcManuallyStopped)
 		{
-			logger::getInstance()->message(logger::LogInfo, "Thread terminated.");
-			threadHandle = 0;
+			EnterCriticalSection(&onProcManuallyStopped_cs);
+			OnProcManuallyStopped();
+			LeaveCriticalSection(&onProcManuallyStopped_cs);
 		}
-		threadHandleMutex.unlock();
-		statusFlag = IsStopped;
+		logger::getInstance()->message(logger::LogInfo, "Process terminated.");
+	}
+	processHandleMutex.unlock();
+
+	threadHandleMutex.lock();
+	if (TerminateThread(threadHandle, NO_ERROR))
+	{
+		logger::getInstance()->message(logger::LogInfo, "Thread terminated.");
+		threadHandle = 0;
+	}
+	threadHandleMutex.unlock();
+	statusFlag = IsStopped;
 
 }
 
@@ -238,9 +230,9 @@ void processManager::CatchProcess(DWORD dwProcessID)
 	if (dwProcessID)
 	{
 		procID = dwProcessID;
-		
+
 		stopProcess();
-		
+
 		processHandleMutex.lock();
 		Handle = OpenProcess(PROCESS_ALL_ACCESS, TRUE, dwProcessID);
 		if (!Handle)
