@@ -143,7 +143,7 @@ void processManager::stopProcess()
 	continueFlag = false;
 
 	monitorHandleMutex.lock();
-	if (TerminateThread(monitorHandle, NO_ERROR))
+	if (monitorHandle && TerminateThread(monitorHandle, NO_ERROR))
 	{
 		logger::getInstance()->message(logger::LogInfo, "Monitor thread terminated.");
 		monitorHandle = 0;
@@ -166,7 +166,7 @@ void processManager::stopProcess()
 	processHandleMutex.unlock();
 
 	threadHandleMutex.lock();
-	if (TerminateThread(threadHandle, NO_ERROR))
+	if (threadHandle && TerminateThread(threadHandle, NO_ERROR))
 	{
 		logger::getInstance()->message(logger::LogInfo, "Thread terminated.");
 		threadHandle = 0;
